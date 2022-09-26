@@ -1,0 +1,602 @@
+---
+title: "Cyclistic User Report"
+subtitle: "A study of casual and annual user historical ride data."
+author: "Matthew Parra"
+date: "9/26/2022"
+output: html_document
+---
+
+<style type="text/css">
+  body{font-size: 1.7em;}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE)
+```
+
+The following is a analytics report created as part of the Google Data Analytics Capstone.
+
+## The Scenario
+I am a junior data analyst working with the marketing analyst team at the finctional company 
+Cyclistic, a bike-share company in Chicago. The financial researchers at Cyclistic have 
+determined that yearly members are significantly more profitable than casual riders. The 
+company's future success, in the opinion of Lily Moreno, director of marketing, hinges on 
+increasing the number of yearly subscribers. To turn casual riders into annual members, 
+the marketing analytics team will create a new marketing plan. By analyzing past data for 
+trends, the marketing team will be able to better understand how casual and annual-subscription 
+Cyclistic riders use the service differently.
+
+
+## The Data
+We will use Cyclistic's historical trip data for the analysis in order to examine and 
+pinpoint user trends. The information will be downloaded from a Cyclistic-provided AWS S3 
+bucket and kept locally in a secure storage drive. Only the previous year (August 2021–
+August 2022) will be included in the Analysis because we are looking at current patterns. 
+Cyclistic directly gathered and keeps track of the data from user activity. Motivate 
+International Inc. complies with [this](https://ride.divvybikes.com/data-license-agreement) 
+Data License Agreement in providing the data to the general public.
+
+The trip data offered will be sufficient because we are searching for patterns in how 
+consumers use the service. In order to undertake an accurate analysis, the data will need 
+to be cleaned and examined for null or empty items. I am unable to use the riders' 
+personally identifying information due to data privacy concerns. I won't be able to 
+determine whether casual riders reside in the Cyclistic service region or whether they 
+have purchased several passes by connecting pass purchases to credit card numbers.
+
+Since I am given a choice between using the spreadsheet software Google Sheets or the 
+programming language R, I choose to use R. With a scripted language like R, every 
+part of the process is documented. Every step taken in the analysis is also documented. 
+Additionally if this type of report is regularly required it can be generated automatically 
+whenever needed.
+
+## Data Cleaning
+
+Although the data is from a trustworthy source, it is in less than ideal shape because 
+some station names are missing and the GPS coordinates have been generalized. All GPS 
+locations must have the same level of accuracy and be marked with station names and an 
+ID in order to maintain the integrity of the data. Therefore, cleaning up the data by 
+deleting rows of information that contain redundant or inconsistent data will make it more 
+orderly. The data will also be cleaned and categorized with columns for ride duration and 
+day of the week the ride began.
+
+### Import tools to clean the data
+To begin, I used the library tidyverse which is an opinionated set of R tools created for 
+data research. Each package within tidyverse has a common data structure, language, and 
+design philosophy which makes it ideal for our project.
+```{r echo = TRUE}
+library(tidyverse)
+```
+
+### Load data into dataframe
+Downloaded from Amazon Web Services, the original data is stored in a secure local drive and
+extracted to a data folder. Prior to cleaning or analysis I inspected each CSV file using 
+Excel ensuring column names match across all files. Using the method below, I am able to 
+access the folder and import the data using the read_csv function and bind all matching 
+row names. Finally, using the Janitor library we can clean the column names and ensure no
+white space will confalte the analysis with errors.
+```{r echo = TRUE}
+csv_data <- list.files(path = "./data", full.names = TRUE) %>%
+  lapply(read_csv) %>%
+  bind_rows %>%
+  janitor::clean_names()
+```
+Using this dataframe we can begin to clean and process the data for analysis.
+
+
+### Column names and total observations (rides)
+Here is a list of column names (features) that are included in the dataset. These features
+will provide us the basic information needed to find out how each customer type uses the 
+ride share service.
+```{r }
+knitr::kable(colnames(csv_data),
+  results = "asis", col.names = NULL,
+  caption = "Column Names")
+```
+
+
+Looking at the dimensions of the data reveals the number of rows (rides recorded) by the 
+number of columns (features) in the data. In this case the dimensions are 6,687,395 rides 
+with 13 features in the dataset.
+```{r }
+knitr::kable(dim(csv_data), col.names = NULL,
+  caption = "Dataset Dimensions")
+```
+With over 6 and a half million observations, there is plenty of room to clean and process 
+the data.
+
+### The cleaning process
+So that our analysis can reflect the true habbits of Cyclistic customers, it is important 
+to remove duplicate records from within the dataset. Using the unique ride IDs I am able to
+create a new dataframe that only contains distinct ride IDs while also deleting rows with 
+unavailable or null data.
+```{r echo = TRUE}
+dist_csv_data <- csv_data %>% distinct(ride_id, .keep_all = TRUE) %>% drop_na()
+```
+Normally, I wouldn't build a new dataframe; instead, R enables me to keep cleaning and 
+processing the data without the need to produce extra dataframes. Separate dataframes will 
+be used for the cleaning procedure for the purpose of clarity.
+
+
+We can process data to create a ride length (in minutes) column and a week day column using 
+the dataframe with unique ride IDs. I also included a month and hour of departure column.
+```{r echo = TRUE}
+preped_data <- dist_csv_data %>%
+  mutate(ride_length = ((as.integer(ended_at) - as.integer(started_at)) / 60))
+
+preped_data$hour_of_start <- lubridate::hour(preped_data$started_at)
+preped_data$day_of_week <- lubridate::wday(preped_data$started_at)
+preped_data$month_of_start <- lubridate::month(preped_data$started_at)
+```
+
+
+We need to make sure that any ride that is registered is from a client and not a 
+maintenance worker. Below, I eliminated rows with inconsistent times if the start time was 
+later than the end time once the ride duration has been determined. Additionally, I used 
+the chance to eliminate rows whose start station and end station were the same, which could 
+have been a sign of a customer who changed their mind or a maintenance worker.
+```{r echo = TRUE}
+preped_data <- subset(preped_data, ride_length > 0 &
+  start_station_id != end_station_id)
+```
+
+
+Looking at a summary of the data we have processed so far, we can see the max and min of the 
+ride length reveals the presence of outliers.
+```{r }
+summary(preped_data)
+```
+
+Even while we can see that each client type's average travel time (in minutes) is not 
+particularly long, the existence of outliers can have an impact on the average, which can 
+change how we see each customer type.
+```{r }
+knitr::kable(aggregate(preped_data$ride_length ~
+  preped_data$member_casual, FUN = mean),
+  results = "asis", format = "pandoc", col.names = NULL,
+  caption = "Average Ride Length (Minutes) per Customer Type")
+```
+
+
+I established an upper and lower bound to handle outliers. Outliers are all observations 
+that fall outside the range defined by the 1 and 99 percentiles. Next, I generated a list and
+dataframe of outliers so that we may create a summary.
+```{r echo = TRUE}
+# Create the upper and lower bounds
+lower_bound <- quantile(preped_data$ride_length, 0.01)
+upper_bound <- quantile(preped_data$ride_length, 0.99)
+
+# Create a list of row numbers of observations that is an outlier
+outlier_list <- which(preped_data$ride_length < lower_bound |
+  preped_data$ride_length > upper_bound)
+
+# Use the outlier list to create a dataframe of outliers
+quant_outliers <- preped_data[outlier_list, c("ride_id", "ride_length")]
+```
+
+
+Looking at a summary of the outliers, we can see that we were able to include the most 
+important ones, such as outliers caused by bike maintenance or inordinately long rides.
+```{r }
+summary(quant_outliers)
+```
+
+
+Finally, I remove all outliers identified earlier and created a new dataframe for analysis.
+```{r echo = TRUE}
+processed_data <- preped_data[-outlier_list, ]
+```
+
+
+Over 4.5 million observations are still available for study after all data cleaning and 
+processing. We can observe that the ride length upper and lower boundaries fall inside a 
+range that is appropriate for renting a bike.
+```{r }
+summary(processed_data)
+```
+
+
+## Analysis
+After the data has been cleansed and processed, we can now examine it for trends. We are 
+comparing and contrasting how annual subscribers and occasional customers used the 
+Cyclistic service over the course of the previous year.
+
+### Number of rides
+To begin we should first take a look at the total number of rides each customer type has made.
+
+```{r }
+knitr::kable(processed_data %>%
+              group_by(member_casual) %>%
+              summarise(total_rides = n()),
+  format = "pandoc", col.names = NULL)
+```
+
+According to the table above, annual members ride more frequently. In actuality, there is 
+a 37% difference between the two sorts of customers.
+
+We can all agree that customers that pay an annual fee use the service more, but we still 
+need to know more about when these customers use the service most and least. It makes 
+sense that clients might utilize the service all year round, but when may demand rise?
+
+```{r fig.align="center", fig.height = 6, fig.width = 14}
+# Visualization for number of rides by rider type per month
+processed_data %>%
+  group_by(member_casual, month_of_start) %>%
+  summarise(number_of_rides = n()) %>%
+  ggplot(aes(x = month_of_start, y = number_of_rides, fill = member_casual)) +
+    geom_col(position = "dodge") +
+    scale_x_continuous(labels = scales::comma,
+      breaks = seq(1, 12, 1), limits = c(0.5, 12.5)) +
+    scale_y_continuous(labels = scales::comma) +
+    theme(text = element_text(size = 16))
+```
+
+According to the graph above, demand increased steadily from March (3) through July (7), 
+peaked in August (8), and then significantly decreased over the next three months. It 
+makes sense that the spring and summer seasons would be the busiest, but August (8) 
+truly jumps out because there is a notable demand for Cyclistic services.
+
+Looking at each individual month below we can see the total number of rides for each 
+day of the week. We can see that on Saturdays (7) and Sundays (1), casual users outperformed 
+yearly members for the months of May (5) through October (10). Only in October (10) did 
+annual members' peak on a Friday (6) or a Saturday (7); otherwise, they always peaked on any
+day from Monday (2) through Thursday (5).
+
+```{r fig.align="center", fig.height = 10, fig.width = 14}
+# Visualization for number of rides by rider type per month
+processed_data %>%
+  group_by(member_casual, day_of_week, month_of_start) %>%
+  summarise(number_of_rides = n()) %>%
+  ggplot(aes(x = day_of_week, y = number_of_rides, fill = member_casual)) +
+    geom_col(position = "dodge") +
+    scale_x_continuous(limits = c(0.5, 7.5), breaks = seq(1, 7, 1)) +
+    scale_y_continuous(labels = scales::comma) +
+    facet_wrap(~month_of_start) +
+    theme(text = element_text(size = 16))
+```
+
+Illustrated below, it appears that occasional users outperform yearly members on the 
+weekends throughout the months.
+
+```{r fig.align="center", fig.height = 6, fig.width = 8}
+# Visualization for number of rides by rider type per week day
+processed_data %>%
+  group_by(member_casual, day_of_week) %>%
+  summarise(number_of_rides = n()) %>%
+  ggplot(aes(x = day_of_week, y = number_of_rides, fill = member_casual)) +
+    geom_col(position = "dodge") +
+    scale_x_continuous(labels = scales::comma,
+      breaks = seq(1, 7, 1), limits = c(0.5, 7.5)) +
+    scale_y_continuous(labels = scales::comma) +
+    theme(text = element_text(size = 11))
+```
+
+Consumers who would use Cyclistic during the weekdays appear to be annual members, but 
+customers who enjoy the weekend prefer to use the service on a casual basis.
+
+With an idea on how the customers may use the service through out the week each month. We should
+also take a moment to consider how the customers use the service throughout the day.
+
+```{r fig.align="center", fig.height = 6, fig.width = 14}
+# Visualization for number of rides by bike type per hour of the day
+processed_data %>%
+  group_by(member_casual, hour_of_start, rideable_type) %>%
+  summarise(number_of_rides = n()) %>%
+  ggplot(aes(x = hour_of_start, y = number_of_rides,
+    fill = member_casual)) +
+    geom_col(position = "dodge") +
+    scale_x_continuous(breaks = seq(0, 23, 1),
+      limits = c(-0.5, 23.5)) +
+    scale_y_continuous(labels = scales::comma) +
+    theme(text = element_text(size = 16))
+```
+
+The graph above displays the overall number of rides for the year broken down into a
+24-hour period. Despite a significant decline in demand between the 23rd hour (11 p.m.) 
+and the fourth hour (4 a.m.), it is clear that cyclistic is in demand around-the-clock. 
+We can still claim that annual Cyclistic members primarily utilize the service for work with
+peak use at 8 a.m., noon, and 5 p.m. It is only at 5 o'clock the casual user appears 
+to reach their peak, with rides distributed rather evenly throughout the 24-hour period.
+
+### Bike Type (Total Rides)
+
+Having knowledge of how frequently each category of customer uses the service is important. 
+Understanding how each kind prefers to bike is crucial for us. Understanding which of the 
+three alternatives each customer selects may help us learn more about how they use 
+Cyclistic.
+
+```{r fig.align="center", fig.height = 6, fig.width = 14}
+# Visualization for number of rides by bike type per hour of the day
+processed_data %>%
+  group_by(member_casual, month_of_start, rideable_type) %>%
+  summarise(number_of_rides = n()) %>%
+  ggplot(aes(x = month_of_start, y = number_of_rides, fill = member_casual)) +
+    geom_col(position = "dodge") +
+    scale_x_continuous(breaks = seq(1, 12, 1), limits = c(0.5, 12.5)) +
+    scale_y_continuous(labels = scales::comma) +
+    facet_wrap(~rideable_type) +
+    theme(text = element_text(size = 16))
+```
+
+While clients have access to a variety of modes of transportation, the graph above shows 
+total rides each month for each customer type for each bike type. showing us that there 
+is a strong preference towards classic bikes. All three types of bikes have been utilized 
+consistently throughout the course of the year, however annual members never use docked bikes.
+
+Looking at the breakdown of total rides for each type of bike throughout a 7-day week in 
+the graph below. It is evident that occasional riders and yearly members continue to favor 
+the classic bike. Additionally, it appears that casual users use the docked bikes and 
+they use the electric bikes more frequently on the weekends than do annual members.
+
+```{r fig.align="center", fig.height = 6, fig.width = 14}
+# Visualization for number of rides by bike type per hour of the day
+processed_data %>%
+  group_by(member_casual, day_of_week, rideable_type) %>%
+  summarise(number_of_rides = n()) %>%
+  ggplot(aes(x = day_of_week, y = number_of_rides, fill = member_casual)) +
+    geom_col(position = "dodge") +
+    scale_x_continuous(limits = c(0.5, 7.5), breaks = seq(1, 7, 1)) +
+    scale_y_continuous(labels = scales::comma) +
+    facet_wrap(~rideable_type) +
+    theme(text = element_text(size = 16))
+```
+
+We have now examined the overall number of rides throughout the previous year. We can infer 
+that yearly members ride more frequently during the week during business hours and prefer 
+to use a classic bike and occasionally an electric bike based on how each customer type 
+uses Cyclistic. Although they prefer the classic bike, casual users prefer to utilize the 
+service on weekends in the evening and will also use the other two types of bikes.
+
+### Average Ride Time
+Only a limited amount of information about each customer types' habits can be gleaned from 
+understanding the users through the frequency of their rides. The average amount of time an 
+annual member or casual user spends riding their selected bike is the next topic of 
+discussion. The table that follows displays the total mean average usage time (in minutes) 
+for each user's type.
+
+```{r }
+knitr::kable(aggregate(processed_data$ride_length ~
+                processed_data$member_casual, FUN = mean),
+  results = "asis", format = "pandoc", col.names = NULL)
+```
+
+We may examine the average time (in minutes) that each client rode their bike each month 
+throughout the previous year, just as we did with the total number of rides each customer 
+took. As you can see below, casual users spend more time on their bikes even if annual 
+members ride more regularly.
+
+```{r fig.align="center", fig.height = 6, fig.width = 14}
+# Visualization for number of rides by rider type per month
+processed_data %>%
+  group_by(member_casual, month_of_start) %>%
+  summarise(average_duration = mean(ride_length)) %>%
+  ggplot(aes(x = month_of_start, y = average_duration,
+    fill = member_casual, colour = member_casual)) +
+    geom_point(size = 5) +
+    scale_x_continuous(breaks = seq(1, 12, 1), limits = c(0.5, 12.5)) +
+    theme(text = element_text(size = 16))
+```
+
+According to the graph above, the highest ride time for casual users occurs between March 
+(3) and September (9). May is the month when casual riders spend the most time on their 
+bike (5). Regular annual members limit their rides to shorter durations, with their peak 
+season starting in May (5) and ending in September (9). It is not surprising that the 
+average ride duration decreases during the Fall and Winter seasons.
+
+After examining the average ride time for each user as a whole, we can further break down 
+the year and examine the average ride time for each day of the week and each month.
+
+```{r fig.align="center", fig.height = 10, fig.width = 14}
+# Visualization for number of rides by rider type per month
+processed_data %>%
+  group_by(member_casual, day_of_week, month_of_start) %>%
+  summarise(average_duration = mean(ride_length)) %>%
+  ggplot(aes(x = day_of_week, y = average_duration,
+    fill = member_casual, colour = member_casual)) +
+    geom_point(size = 5) +
+    scale_x_continuous(limits = c(0.5, 7.5), breaks = seq(1, 7, 1)) +
+    facet_wrap(~month_of_start) +
+    theme(text = element_text(size = 16))
+```
+
+As their peak season starts and spring ushers in warmer weather, we can observe 
+above that ride lengths for the casual user grow increasingly volatile. The average 
+trip time levels off as the peak period for casual users goes on, with weekend highs and 
+decreased weekday usage. Although their season doesn't start until May (5), the yearly 
+members' ride durations start to slightly increase in March (3), similar to the casual 
+users. Once more, it is clear that yearly members do not ride their bikes very often.
+
+
+It's interesting to see that, like casual users, annual member ride duration peaks on the 
+weekends. Although the ride durations of casual riders are longer, both utilization seems 
+to rise and fall on days that are similar.
+
+```{r fig.align="center", fig.height = 6, fig.width = 8}
+# Visualization for average duration of ride per rider type per week day
+processed_data %>%
+  group_by(member_casual, day_of_week) %>%
+  summarise(average_duration = mean(ride_length)) %>%
+  ggplot(aes(x = day_of_week, y = average_duration,
+    fill = member_casual, colour = member_casual)) +
+    geom_point(size = 5) +
+    scale_x_continuous(limits = c(0.5, 7.5), breaks = seq(1, 7, 1)) +
+    theme(text = element_text(size = 11))
+```
+
+The graph above shows that despite the difference in average ride lengths, both occasional 
+users and yearly members choose similar days.
+
+Examining the typical ride time for each type of customer. The graph below displays the 
+average time spent by each customer type during a 24-hour period.
+
+```{r fig.align="center", fig.height = 6, fig.width = 14}
+# Visualization for number of rides by bike type per hour of the day
+processed_data %>%
+  group_by(member_casual, hour_of_start) %>%
+  summarise(average_duration = mean(ride_length)) %>%
+  ggplot(aes(x = hour_of_start, y = average_duration,
+    fill = member_casual, colour = member_casual)) +
+    geom_point(size = 5) +
+    scale_x_continuous(breaks = seq(0, 23, 1),
+      limits = c(-0.5, 23.5)) +
+    theme(text = element_text(size = 16))
+```
+
+With dips in the early morning hours at 5 a.m. and a gradual rise until about 2 p.m., annual 
+members continue to maintain a modest and almost consistent ride duration. Casual users 
+appear to reach their peak at 10 a.m., which lasts through 2 p.m., then declines to an average, 
+which holds through 3 a.m., then lowers for the night before picking up at 8 a.m. once more.
+
+### Bike Type (Average Duration)
+
+Now that we know when each sort of consumer likes to use the service and for how long 
+they typically enjoy riding. The average riding time for each type of customer and 
+each bike type for each month of the year is broken down below. We can see that the 
+average user will spend roughly the same amount of time on both the classic and the 
+electric bike during their peak season, which runs from March (3) through September (9). 
+Additionally, we can anticipate that casual customers will use the docked bike for 
+significantly longer than usual, particularly from May (5) through June (7).
+
+```{r fig.align="center", fig.height = 6, fig.width = 14}
+# Visualization for number of rides by bike type per hour of the day
+processed_data %>%
+  group_by(member_casual, month_of_start, rideable_type) %>%
+  summarise(average_duration = mean(ride_length)) %>%
+  ggplot(aes(x = month_of_start, y = average_duration,
+    fill = member_casual, colour = member_casual)) +
+    geom_point(size = 5) +
+    scale_x_continuous(breaks = seq(1, 12, 1), limits = c(0.5, 12.5)) +
+    facet_wrap(~rideable_type) +
+    theme(text = element_text(size = 16))
+```
+
+In addition to the aforementioned, we can also claim that annual members ride both 
+traditional and electric bikes, with average ride times distributed throughout the year 
+and the longest ride durations occurring during the peak season (May to September).
+
+Below is a breakdown of the typical riding time for each type of customer for each day of 
+the week on each type of bike. We may observe that each sort of consumer selects 
+comparable days to boost use throughout the course of the week. Casual users appear to 
+utilize docked bikes for a significantly longer average time than other bikes.
+
+```{r fig.align="center", fig.height = 6, fig.width = 14}
+# Visualization for number of rides by bike type per hour of the day
+processed_data %>%
+  group_by(member_casual, day_of_week, rideable_type) %>%
+  summarise(average_duration = mean(ride_length)) %>%
+  ggplot(aes(x = day_of_week, y = average_duration,
+    fill = member_casual, colour = member_casual)) +
+    geom_point(size = 5) +
+    scale_x_continuous(limits = c(0.5, 7.5), breaks = seq(1, 7, 1)) +
+    facet_wrap(~rideable_type) +
+    theme(text = element_text(size = 16))
+```
+
+We have now looked at the typical ride length for each category of customers over the past 
+year. We can assume that casual users ride longer on the weekends particularly during the 
+spring and summer from late morning through latter afternoons. Longer trips on docked bikes are also taken by casual users who utilize 
+both traditional and electric bikes. The yearly member prefers electric and classic bikes 
+when using the Cyclistic service, even if they maintain a low consistent average ride duration 
+with weekly peaks similar to casual users.
+
+### Geospatial Analysis
+
+Although we have a complete picture of our clients' riding patterns throughout the year, 
+it's crucial to comprehend why they choose to use the Cyclistic service. The data 
+given included GPS information for each ride taken over the previous year. Using Tableau, 
+I plotted the top 10 stations each sort of consumer utilized to begin their ride, and 
+I've embedded interactive maps below. We will only look at the overall number of rides 
+per station per client category in order to keep the analysis focused on our current objectives.
+
+#### Top 10 Locations for Annual Members
+
+<div class='tableauPlaceholder' id='viz1664192178483' style='position: relative'>
+  <noscript>
+    <a href='#'><img alt='Sheet 1 ' src='https:&#47;&#47;public.tableau.com&#47;static&#47;images&#47;JX&#47;JX25FM668&#47;1_rss.png' style='border: none' /></a>
+  </noscript>
+  <object class='tableauViz'  style='display:none;'>
+    <param name='host_url' value='https%3A%2F%2Fpublic.tableau.com%2F' /><param name='embed_code_version' value='3' />
+    <param name='path' value='shared&#47;JX25FM668' /><param name='toolbar' value='yes' />
+    <param name='static_image' value='https:&#47;&#47;public.tableau.com&#47;static&#47;images&#47;JX&#47;JX25FM668&#47;1.png' />
+    <param name='animate_transition' value='yes' /><param name='display_static_image' value='yes' />
+    <param name='display_spinner' value='yes' /><param name='display_overlay' value='yes' />
+    <param name='display_count' value='yes' /><param name='language' value='en-US' />
+  </object>
+</div>
+
+<script type='text/javascript'>
+  var divElement = document.getElementById('viz1664192178483');
+  var vizElement = divElement.getElementsByTagName('object')[0];
+  vizElement.style.width='100%';
+  vizElement.style.height=(divElement.offsetWidth*0.75)+'px';
+  var scriptElement = document.createElement('script');
+  scriptElement.src = 'https://public.tableau.com/javascripts/api/viz_v1.js';
+  vizElement.parentNode.insertBefore(scriptElement, vizElement);
+</script>
+
+<br />
+
+As seen above, yearly users like to start their journeys from locations like Kingsbury St. 
+& Kinzie St., where there are several parks, eateries, and cafes in the vicinity. The 
+Clark & Elm St station, where there is a wealth of retail nearby, as well as public 
+transportation hubs that one can reach by using a bike from Cyclistic. While we are unsure 
+of the exact destinations that our yearly customers are going to, we can say that, with 
+average journey times of about 12 minutes, they are not traveling very far.
+
+<br />
+
+#### Top 10 Locations for Casual Users 
+
+<div class='tableauPlaceholder' id='viz1664192919284' style='position: relative'>
+  <noscript>
+    <a href='#'>
+      <img alt='Sheet 1 ' src='https:&#47;&#47;public.tableau.com&#47;static&#47;images&#47;YD&#47;YD383ZBDT&#47;1_rss.png' style='border: none' />
+    </a>
+  </noscript>
+  <object class='tableauViz'  style='display:none;'>
+    <param name='host_url' value='https%3A%2F%2Fpublic.tableau.com%2F' />
+    <param name='embed_code_version' value='3' /> <param name='path' value='shared&#47;YD383ZBDT' />
+    <param name='toolbar' value='yes' /><param name='static_image' value='https:&#47;&#47;public.tableau.com&#47;static&#47;images&#47;YD&#47;YD383ZBDT&#47;1.png' />
+    <param name='animate_transition' value='yes' /><param name='display_static_image' value='yes' />
+    <param name='display_spinner' value='yes' /><param name='display_overlay' value='yes' />
+    <param name='display_count' value='yes' /><param name='language' value='en-US' />
+  </object>
+</div>
+
+<script type='text/javascript'>
+  var divElement = document.getElementById('viz1664192919284');
+  var vizElement = divElement.getElementsByTagName('object')[0];
+  vizElement.style.width='100%';
+  vizElement.style.height=(divElement.offsetWidth*0.75)+'px';
+  var scriptElement = document.createElement('script');
+  scriptElement.src = 'https://public.tableau.com/javascripts/api/viz_v1.js';
+  vizElement.parentNode.insertBefore(scriptElement, vizElement);
+</script>
+
+<br />
+
+After examining annual members, we can move on to casual users. As seen above, casual 
+users like stations that are close to tourist attractions. Casual users have specifically 
+frequented the Streeter Dr. & Grand Ave. station, which is close to Ohio Street Beach, 
+Lake Point Tower, and Pier Park. The North Western University Chicago Campus and the 
+Lakeshore East Park, which is close by and has hotels and restaurants, are both accessible 
+from the Streeter Dr. & Grand Ave. station.
+
+## Insight
+
+In order to investigate and identify user trends that will enable us to more fully 
+comprehend how annual members and casual Cyclistic users utilize the service 
+differently, we had to look at past data that Cyclistic had supplied. We used R to 
+prepare and analyze data that we had downloaded from an AWS S3 bucket. We also utilized 
+Tableau to perform GIS analysis. By analyzing the overall number of rides, we can 
+conclude that annual members, who prefer classic bikes, ride more frequently than 
+casual members, who also prefer classic cycles but will also ride electric, and that 
+casual members are the only customer category that will ride a docked bike.
+
+Although casual members bike for longer, yearly members ride more frequently 
+during the week during business hours, keeping the average ride time modest and constant. 
+Weekend evenings are when casual members tend to use the service. According to the GIS 
+study, if the top 10 stations are any indicator, annual members will stick to stations 
+inside the city that are close to public transportation, while casual users would 
+frequently utilize stations near busy areas. The best understanding of why Cyclistic 
+consumers use the service would come from further GIS research as well as more data on 
+user habits.
